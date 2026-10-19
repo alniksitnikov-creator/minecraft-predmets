@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Voxel Item 3D Mobile</title>
+<title>Voxel Item → MCADDON</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -12,6 +12,7 @@
     margin: 0; padding: 8px;
     text-align: center;
     touch-action: manipulation;
+    overflow-x: hidden;
   }
   h2 { font-size: 16px; margin: 4px 0; }
   .row {
@@ -42,30 +43,27 @@
   canvas {
     image-rendering: pixelated;
     display: block; margin: 4px auto;
-    touch-action: none;
+    touch-action: none; /* КРИТИЧНО для телефона */
   }
-  /* 2D-редактор: светлый фон, бело-зелёные линии */
   #c2d {
     border: 2px solid #a8e6a8;
     background: #f5f5f5;
     width: 90vw; height: 90vw;
     max-width: 360px; max-height: 360px;
   }
-  /* 3D-превью */
   #c3d {
     border: 2px solid #a8e6a8;
     background: #e8f5e8;
-    width: 90vw; height: 60vw;
-    max-width: 360px; max-height: 240px;
+    width: 90vw; height: 50vw;
+    max-width: 360px; max-height: 200px;
   }
   .hint { font-size: 11px; color: #aaa; margin: 2px 0; }
   .field { display: flex; flex-direction: column; align-items: center; gap: 3px; }
   .field label { font-size: 12px; color: #ccc; }
-  .toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 </style>
 </head>
 <body>
-<h2>Воксельный предмет + 3D</h2>
+<h2>Воксельный предмет → .mcaddon</h2>
 
 <div class="row">
   <button onclick="prevLayer()">◀</button>
@@ -86,11 +84,11 @@
 
 <div class="row">
   <button onclick="update3D()" style="background:#4caf50;color:#fff;">Обновить 3D</button>
-  <label class="toggle"><input type="checkbox" id="auto3d" checked> Авто-3D</label>
+  <label style="font-size:13px;"><input type="checkbox" id="auto3d" checked> Авто-3D</label>
 </div>
 
 <canvas id="c3d"></canvas>
-<p class="hint">Крути 3D модель пальцем.</p>
+<p class="hint">Крути 3D модель пальцем (drag).</p>
 
 <div class="row">
   <div class="field">
@@ -103,7 +101,7 @@
   </div>
 </div>
 <div class="row">
-  <button onclick="generate()" style="background:#4caf50;color:#fff;font-size:16px;padding:14px 24px;">Скачать пак</button>
+  <button onclick="generate()" style="background:#4caf50;color:#fff;font-size:16px;padding:14px 24px;">Скачать .mcaddon</button>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -132,23 +130,19 @@ function renderLayerBar() {
 }
 
 function refresh2D() {
-  // Светлый фон
   ctx.fillStyle = '#f5f5f5';
   ctx.fillRect(0, 0, SIZE, SIZE);
-  // Бело-зелёные линии сетки
   ctx.strokeStyle = '#a8e6a8';
   ctx.lineWidth = 0.08;
   for (let i = 0; i <= SIZE; i++) {
     ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, SIZE); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(SIZE, i); ctx.stroke();
   }
-  // Закрашенные воксели
-  for (let y = 0; y < SIZE; y++) {
+  for (let y = 0; y < SIZE; y++)
     for (let x = 0; x < SIZE; x++) {
       const col = voxels[currentLayer][y][x];
       if (col) { ctx.fillStyle = col; ctx.fillRect(x + 0.04, y + 0.04, 0.92, 0.92); }
     }
-  }
 }
 
 function pos2D(e) {
@@ -186,7 +180,7 @@ function applyHex() {
   if (/^#[0-9a-fA-F]{6}$/.test(v)) document.getElementById('color').value = v;
 }
 
-// ===== 3D ПРЕВЬЮ (Three.js) =====
+// ===== 3D ПРЕВЬЮ =====
 const c3d = document.getElementById('c3d');
 const renderer = new THREE.WebGLRenderer({ canvas: c3d, antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -204,16 +198,18 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 let modelGroup = new THREE.Group();
 scene.add(modelGroup);
 
-// Вращение пальцем
 let rotX = -0.5, rotY = 0.6;
 let dragging = false, lastX = 0, lastY = 0;
 
+// КРИТИЧНО: preventDefault + capture
 c3d.addEventListener('pointerdown', e => {
+  e.preventDefault();
   dragging = true; lastX = e.clientX; lastY = e.clientY;
   c3d.setPointerCapture(e.pointerId);
 });
 c3d.addEventListener('pointermove', e => {
   if (!dragging) return;
+  e.preventDefault();
   const dx = e.clientX - lastX, dy = e.clientY - lastY;
   lastX = e.clientX; lastY = e.clientY;
   rotY += dx * 0.01;
@@ -232,7 +228,6 @@ function resize3D() {
 window.addEventListener('resize', resize3D);
 
 function update3D() {
-  // Удаляем старые кубы
   while (modelGroup.children.length) {
     const obj = modelGroup.children.pop();
     obj.geometry?.dispose();
@@ -246,11 +241,9 @@ function update3D() {
         if (!col) continue;
         const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(col) });
         const cube = new THREE.Mesh(geom, mat);
-        // Центрируем модель вокруг нуля
         cube.position.set(x - SIZE/2 + 0.5, y - SIZE/2 + 0.5, z - SIZE/2 + 0.5);
         modelGroup.add(cube);
       }
-  // Центрируем группу по bounding box
   const box = new THREE.Box3().setFromObject(modelGroup);
   const center = box.getCenter(new THREE.Vector3());
   modelGroup.position.sub(center);
@@ -263,7 +256,7 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-// ===== ГЕНЕРАЦИЯ ПАКА =====
+// ===== ГЕНЕРАЦИЯ .MCADDON =====
 async function generate() {
   const name = document.getElementById('name').value || 'Voxel Item';
   const id = document.getElementById('id').value || 'voxel_item';
@@ -276,7 +269,6 @@ async function generate() {
 
   if (cubes.length === 0) { alert('Нарисуй хотя бы один воксель!'); return; }
 
-  // Текстура-атлас: 8x8, каждый воксель = 1 пиксель по (x,y)
   const texCanvas = document.createElement('canvas');
   texCanvas.width = SIZE; texCanvas.height = SIZE;
   const tctx = texCanvas.getContext('2d');
@@ -329,6 +321,7 @@ async function generate() {
     }
   };
 
+  // ВАЖНО: .mcaddon — это ZIP с расширением .mcaddon
   const zip = new JSZip();
   const bp = zip.folder(id + "_BP");
   bp.file("manifest.json", JSON.stringify({
@@ -355,9 +348,9 @@ async function generate() {
   const out = await zip.generateAsync({ type: "blob" });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(out);
-  a.download = id + ".zip";
+  a.download = id + ".mcaddon";  // <-- расширение .mcaddon!
   a.click();
-  alert("Готово! Распакуй ZIP → внутри BP и RP → импортируй оба в Minecraft.");
+  alert("Готово! Открой скачанный .mcaddon — Minecraft должен предложить импорт.");
 }
 
 // ===== СТАРТ =====
@@ -368,4 +361,4 @@ update3D();
 animate();
 </script>
 </body>
- </html>
+</html>
