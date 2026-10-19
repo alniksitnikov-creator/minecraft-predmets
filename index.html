@@ -6,14 +6,15 @@
 <title>Voxel Item → MCADDON</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  body {
-    font-family: system-ui, sans-serif;
+  html, body {
+    margin: 0; padding: 0;
     background: #1e1e1e; color: #eee;
-    margin: 0; padding: 8px;
+    font-family: system-ui, sans-serif;
     text-align: center;
-    touch-action: manipulation;
     overflow-x: hidden;
+    touch-action: manipulation;
   }
+  body { padding: 8px; }
   h2 { font-size: 16px; margin: 4px 0; }
   .row {
     display: flex; flex-wrap: wrap; gap: 6px;
@@ -24,38 +25,38 @@
     padding: 10px 14px; font-size: 14px;
     border: none; border-radius: 8px;
     background: #333; color: #eee;
-    cursor: pointer; min-height: 42px;
+    cursor: pointer; min-height: 44px;
   }
   button:active { background: #555; }
   button.active-layer { background: #4caf50; color: #fff; }
-  input[type=color] { width: 50px; height: 42px; border: none; border-radius: 8px; background: transparent; }
+  input[type=color] { width: 52px; height: 44px; border: none; border-radius: 8px; background: transparent; }
   input[type=text] {
-    padding: 9px; font-size: 14px; border-radius: 8px;
+    padding: 10px; font-size: 14px; border-radius: 8px;
     border: 1px solid #555; background: #2a2a2a; color: #eee;
-    width: 100%; max-width: 180px;
+    width: 100%; max-width: 170px;
   }
   #hex { max-width: 100px; }
   #layerBar {
     display: flex; overflow-x: auto; gap: 6px; padding: 4px 0;
     -webkit-overflow-scrolling: touch;
   }
-  #layerBar button { flex: 0 0 auto; min-width: 42px; }
+  #layerBar button { flex: 0 0 auto; min-width: 44px; }
   canvas {
     image-rendering: pixelated;
-    display: block; margin: 4px auto;
-    touch-action: none; /* КРИТИЧНО для телефона */
+    display: block; margin: 6px auto;
+    touch-action: none; /* критично: запрет скролла/зума на canvas */
   }
   #c2d {
     border: 2px solid #a8e6a8;
     background: #f5f5f5;
-    width: 90vw; height: 90vw;
-    max-width: 360px; max-height: 360px;
+    width: 92vw; height: 92vw;
+    max-width: 380px; max-height: 380px;
   }
   #c3d {
     border: 2px solid #a8e6a8;
     background: #e8f5e8;
-    width: 90vw; height: 50vw;
-    max-width: 360px; max-height: 200px;
+    width: 92vw; height: 55vw;
+    max-width: 380px; max-height: 230px;
   }
   .hint { font-size: 11px; color: #aaa; margin: 2px 0; }
   .field { display: flex; flex-direction: column; align-items: center; gap: 3px; }
@@ -83,8 +84,7 @@
 <p class="hint">Рисуй пальцем. Сетка светлая, линии бело-зелёные.</p>
 
 <div class="row">
-  <button onclick="update3D()" style="background:#4caf50;color:#fff;">Обновить 3D</button>
-  <label style="font-size:13px;"><input type="checkbox" id="auto3d" checked> Авто-3D</label>
+  <button onclick="rebuild3D()" style="background:#4caf50;color:#fff;">Обновить 3D</button>
 </div>
 
 <canvas id="c3d"></canvas>
@@ -107,11 +107,15 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+// ======================= ДАННЫЕ =======================
 const SIZE = 8;
 let currentLayer = 0;
-let voxels = Array.from({length: SIZE}, () => Array.from({length: SIZE}, () => Array(SIZE).fill(null)));
+// voxels[layer][y][x] = цвет или null
+let voxels = Array.from({length: SIZE}, () =>
+  Array.from({length: SIZE}, () => Array(SIZE).fill(null))
+);
 
-// ===== 2D РЕДАКТОР =====
+// ======================= 2D РЕДАКТОР =======================
 const c2d = document.getElementById('c2d');
 const ctx = c2d.getContext('2d');
 let painting = false;
@@ -123,67 +127,120 @@ function renderLayerBar() {
     const btn = document.createElement('button');
     btn.textContent = i;
     if (i === currentLayer) btn.classList.add('active-layer');
-    btn.onclick = () => { currentLayer = i; refresh2D(); renderLayerBar(); if (document.getElementById('auto3d').checked) update3D(); };
+    btn.onclick = () => {
+      currentLayer = i;
+      refresh2D();
+      renderLayerBar();
+      rebuild3D(); // всегда обновляем 3D при смене слоя
+    };
     bar.appendChild(btn);
   }
   document.getElementById('layerLabel').textContent = currentLayer;
 }
 
 function refresh2D() {
+  // светлый фон
   ctx.fillStyle = '#f5f5f5';
   ctx.fillRect(0, 0, SIZE, SIZE);
+  // бело-зелёные линии сетки
   ctx.strokeStyle = '#a8e6a8';
   ctx.lineWidth = 0.08;
   for (let i = 0; i <= SIZE; i++) {
     ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, SIZE); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(SIZE, i); ctx.stroke();
   }
-  for (let y = 0; y < SIZE; y++)
+  // закрашенные воксели
+  for (let y = 0; y < SIZE; y++) {
     for (let x = 0; x < SIZE; x++) {
       const col = voxels[currentLayer][y][x];
-      if (col) { ctx.fillStyle = col; ctx.fillRect(x + 0.04, y + 0.04, 0.92, 0.92); }
+      if (col) {
+        ctx.fillStyle = col;
+        ctx.fillRect(x + 0.04, y + 0.04, 0.92, 0.92);
+      }
     }
+  }
 }
 
-function pos2D(e) {
+function pos2D(clientX, clientY) {
   const r = c2d.getBoundingClientRect();
   return {
-    x: Math.floor((e.clientX - r.left) / r.width * SIZE),
-    y: Math.floor((e.clientY - r.top) / r.height * SIZE)
+    x: Math.floor((clientX - r.left) / r.width * SIZE),
+    y: Math.floor((clientY - r.top) / r.height * SIZE)
   };
 }
 
-c2d.addEventListener('pointerdown', e => {
-  e.preventDefault(); painting = true; c2d.setPointerCapture(e.pointerId); paint(e);
-});
-c2d.addEventListener('pointermove', e => { if (painting) { e.preventDefault(); paint(e); } });
-c2d.addEventListener('pointerup', () => painting = false);
-c2d.addEventListener('pointercancel', () => painting = false);
-
-function paint(e) {
-  const p = pos2D(e);
+function paintAt(clientX, clientY) {
+  const p = pos2D(clientX, clientY);
   if (p.x < 0 || p.x >= SIZE || p.y < 0 || p.y >= SIZE) return;
   const col = document.getElementById('color').value;
   voxels[currentLayer][p.y][p.x] = col;
   refresh2D();
-  if (document.getElementById('auto3d').checked) update3D();
+  rebuild3D(); // сразу обновляем 3D
 }
 
+// --- Тач-события (надёжнее pointer на телефоне) ---
+c2d.addEventListener('touchstart', e => {
+  e.preventDefault();
+  painting = true;
+  const t = e.touches[0];
+  paintAt(t.clientX, t.clientY);
+}, { passive: false });
+
+c2d.addEventListener('touchmove', e => {
+  if (!painting) return;
+  e.preventDefault();
+  const t = e.touches[0];
+  paintAt(t.clientX, t.clientY);
+}, { passive: false });
+
+c2d.addEventListener('touchend', e => { e.preventDefault(); painting = false; }, { passive: false });
+c2d.addEventListener('touchcancel', e => { e.preventDefault(); painting = false; }, { passive: false });
+
+// Мышь для ПК
+c2d.addEventListener('mousedown', e => {
+  painting = true;
+  paintAt(e.clientX, e.clientY);
+});
+c2d.addEventListener('mousemove', e => {
+  if (painting) paintAt(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup', () => painting = false);
+
 function clearLayer() {
-  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) voxels[currentLayer][y][x] = null;
-  refresh2D(); update3D();
+  for (let y = 0; y < SIZE; y++)
+    for (let x = 0; x < SIZE; x++)
+      voxels[currentLayer][y][x] = null;
+  refresh2D();
+  rebuild3D();
 }
-function prevLayer() { if (currentLayer > 0) { currentLayer--; refresh2D(); renderLayerBar(); update3D(); } }
-function nextLayer() { if (currentLayer < SIZE - 1) { currentLayer++; refresh2D(); renderLayerBar(); update3D(); } }
+
+function prevLayer() {
+  if (currentLayer > 0) {
+    currentLayer--;
+    refresh2D();
+    renderLayerBar();
+    rebuild3D();
+  }
+}
+function nextLayer() {
+  if (currentLayer < SIZE - 1) {
+    currentLayer++;
+    refresh2D();
+    renderLayerBar();
+    rebuild3D();
+  }
+}
 function applyHex() {
   const v = document.getElementById('hex').value.trim();
   if (/^#[0-9a-fA-F]{6}$/.test(v)) document.getElementById('color').value = v;
+  else alert('HEX вида #rrggbb');
 }
 
-// ===== 3D ПРЕВЬЮ =====
+// ======================= 3D ПРЕВЬЮ =======================
 const c3d = document.getElementById('c3d');
-const renderer = new THREE.WebGLRenderer({ canvas: c3d, antialias: true, alpha: false });
+const renderer = new THREE.WebGLRenderer({ canvas: c3d, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xe8f5e8);
 
@@ -195,55 +252,86 @@ light.position.set(10, 20, 10);
 scene.add(light);
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
-let modelGroup = new THREE.Group();
+const modelGroup = new THREE.Group();
 scene.add(modelGroup);
 
 let rotX = -0.5, rotY = 0.6;
 let dragging = false, lastX = 0, lastY = 0;
 
-// КРИТИЧНО: preventDefault + capture
-c3d.addEventListener('pointerdown', e => {
+// --- 3D вращение через touch (надёжно) ---
+c3d.addEventListener('touchstart', e => {
   e.preventDefault();
-  dragging = true; lastX = e.clientX; lastY = e.clientY;
-  c3d.setPointerCapture(e.pointerId);
-});
-c3d.addEventListener('pointermove', e => {
+  dragging = true;
+  const t = e.touches[0];
+  lastX = t.clientX;
+  lastY = t.clientY;
+}, { passive: false });
+
+c3d.addEventListener('touchmove', e => {
   if (!dragging) return;
   e.preventDefault();
-  const dx = e.clientX - lastX, dy = e.clientY - lastY;
-  lastX = e.clientX; lastY = e.clientY;
+  const t = e.touches[0];
+  const dx = t.clientX - lastX;
+  const dy = t.clientY - lastY;
+  lastX = t.clientX;
+  lastY = t.clientY;
   rotY += dx * 0.01;
   rotX += dy * 0.01;
-  rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, rotX));
+  rotX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, rotX));
+}, { passive: false });
+
+c3d.addEventListener('touchend', e => { e.preventDefault(); dragging = false; }, { passive: false });
+c3d.addEventListener('touchcancel', e => { e.preventDefault(); dragging = false; }, { passive: false });
+
+// Мышь для ПК
+c3d.addEventListener('mousedown', e => {
+  dragging = true;
+  lastX = e.clientX;
+  lastY = e.clientY;
 });
-c3d.addEventListener('pointerup', () => dragging = false);
-c3d.addEventListener('pointercancel', () => dragging = false);
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX;
+  const dy = e.clientY - lastY;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  rotY += dx * 0.01;
+  rotX += dy * 0.01;
+  rotX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, rotX));
+});
+window.addEventListener('mouseup', () => dragging = false);
 
 function resize3D() {
-  const w = c3d.clientWidth, h = c3d.clientHeight;
+  const w = c3d.clientWidth;
+  const h = c3d.clientHeight;
+  if (w === 0 || h === 0) return;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', resize3D);
 
-function update3D() {
+function rebuild3D() {
+  // удаляем старые кубы
   while (modelGroup.children.length) {
     const obj = modelGroup.children.pop();
-    obj.geometry?.dispose();
-    obj.material?.dispose();
+    if (obj.geometry) obj.geometry.dispose();
+    if (obj.material) obj.material.dispose();
   }
   const geom = new THREE.BoxGeometry(1, 1, 1);
-  for (let z = 0; z < SIZE; z++)
-    for (let y = 0; y < SIZE; y++)
+  for (let z = 0; z < SIZE; z++) {
+    for (let y = 0; y < SIZE; y++) {
       for (let x = 0; x < SIZE; x++) {
         const col = voxels[z][y][x];
         if (!col) continue;
         const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(col) });
         const cube = new THREE.Mesh(geom, mat);
-        cube.position.set(x - SIZE/2 + 0.5, y - SIZE/2 + 0.5, z - SIZE/2 + 0.5);
+        cube.position.set(x - SIZE / 2 + 0.5, y - SIZE / 2 + 0.5, z - SIZE / 2 + 0.5);
         modelGroup.add(cube);
       }
+    }
+  }
+  // центрируем
   const box = new THREE.Box3().setFromObject(modelGroup);
   const center = box.getCenter(new THREE.Vector3());
   modelGroup.position.sub(center);
@@ -256,10 +344,10 @@ function animate() {
   renderer.render(scene, camera);
 }
 
-// ===== ГЕНЕРАЦИЯ .MCADDON =====
+// ======================= ГЕНЕРАЦИЯ .MCADDON =======================
 async function generate() {
   const name = document.getElementById('name').value || 'Voxel Item';
-  const id = document.getElementById('id').value || 'voxel_item';
+  const id = (document.getElementById('id').value || 'voxel_item').replace(/[^a-z0-9_]/gi, '_').toLowerCase();
 
   const cubes = [];
   for (let z = 0; z < SIZE; z++)
@@ -267,10 +355,15 @@ async function generate() {
       for (let x = 0; x < SIZE; x++)
         if (voxels[z][y][x]) cubes.push({ x, y, z, color: voxels[z][y][x] });
 
-  if (cubes.length === 0) { alert('Нарисуй хотя бы один воксель!'); return; }
+  if (cubes.length === 0) {
+    alert('Нарисуй хотя бы один воксель!');
+    return;
+  }
 
+  // текстура-атлас 8x8
   const texCanvas = document.createElement('canvas');
-  texCanvas.width = SIZE; texCanvas.height = SIZE;
+  texCanvas.width = SIZE;
+  texCanvas.height = SIZE;
   const tctx = texCanvas.getContext('2d');
   cubes.forEach(cube => {
     tctx.fillStyle = cube.color;
@@ -283,7 +376,8 @@ async function generate() {
     "minecraft:geometry": [{
       description: { identifier: "geometry." + id, texture_width: SIZE, texture_height: SIZE },
       bones: [{
-        name: "root", pivot: [0, 0, 0],
+        name: "root",
+        pivot: [0, 0, 0],
         cubes: cubes.map(cube => ({
           origin: [cube.x, cube.y, cube.z],
           size: [1, 1, 1],
@@ -321,8 +415,9 @@ async function generate() {
     }
   };
 
-  // ВАЖНО: .mcaddon — это ZIP с расширением .mcaddon
   const zip = new JSZip();
+
+  // Behavior Pack
   const bp = zip.folder(id + "_BP");
   bp.file("manifest.json", JSON.stringify({
     format_version: 2,
@@ -331,6 +426,7 @@ async function generate() {
   }, null, 2));
   bp.folder("items").file(id + ".json", JSON.stringify(bpItem, null, 2));
 
+  // Resource Pack
   const rp = zip.folder(id + "_RP");
   rp.file("manifest.json", JSON.stringify({
     format_version: 2,
@@ -339,7 +435,8 @@ async function generate() {
   }, null, 2));
   rp.folder("textures/items").file(id + ".png", texBlob);
   rp.folder("textures").file("item_texture.json", JSON.stringify({
-    resource_pack_name: "vanilla", texture_name: "atlas.items",
+    resource_pack_name: "vanilla",
+    texture_name: "atlas.items",
     texture_data: { [id]: { textures: "textures/items/" + id } }
   }, null, 2));
   rp.folder("models/entity").file(id + ".geo.json", JSON.stringify(geo, null, 2));
@@ -348,16 +445,21 @@ async function generate() {
   const out = await zip.generateAsync({ type: "blob" });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(out);
-  a.download = id + ".mcaddon";  // <-- расширение .mcaddon!
+  a.download = id + ".mcaddon";
+  document.body.appendChild(a);
   a.click();
-  alert("Готово! Открой скачанный .mcaddon — Minecraft должен предложить импорт.");
+  document.body.removeChild(a);
+  alert("Готово! Открой скачанный .mcaddon — Minecraft предложит импорт.\n\nПосле импорта активируй ОБА пака (RP и BP) в настройках мира.");
 }
 
-// ===== СТАРТ =====
+// ======================= СТАРТ =======================
 renderLayerBar();
 refresh2D();
-resize3D();
-update3D();
+// Небольшая задержка, чтобы canvas получил размеры
+setTimeout(() => {
+  resize3D();
+  rebuild3D();
+}, 100);
 animate();
 </script>
 </body>
