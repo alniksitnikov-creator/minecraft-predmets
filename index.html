@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Voxel Item 3D (Исправленный)</title>
+<title>Voxel Item 3D (Объемный)</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
@@ -42,7 +42,7 @@
 </style>
 </head>
 <body>
-<h2>Воксельный редактор (сплошное рисование)</h2>
+<h2>Воксельный редактор (объемный 3D)</h2>
 
 <div class="row">
   <button onclick="prevLayer()">◀ Слой</button>
@@ -114,70 +114,143 @@ function refresh2D() {
   }
 }
 
-// === 3D ОТРИСОВКА (ОРТОГРАФИЧЕСКАЯ, БЕЗ РАЗЛЕТАНИЯ) ===
-let rotX = 0.5, rotY = 0.5;
-let mode = 'draw'; // 'draw' или '3d'
+// === НАСТОЯЩЕЕ ОБЪЕМНОЕ 3D (С ГРАНЯМИ) ===
+let rotX = 0.5, rotY = -0.5; // Начальный угол, чтобы видеть 3 грани
+let isViewing3D = false;
 
 function rotate3D(dx, dy) {
   rotY += dx;
   rotX += dy;
-  rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, rotX));
-  mode = '3d'; // При вращении переключаемся на 3D
+  // Ограничиваем наклон, чтобы не переворачивалось
+  rotX = Math.max(-Math.PI/2 + 0.1, Math.min(Math.PI/2 - 0.1, rotX));
+  isViewing3D = true;
   refresh3D();
 }
 
 function reset3D() {
-  rotX = 0.5; rotY = 0.5;
-  mode = '3d';
+  rotX = 0.5; rotY = -0.5;
+  isViewing3D = true;
   refresh3D();
 }
 
+// Функция затемнения цвета для граней
+function shadeColor(color, percent) {
+  const num = parseInt(color.replace("#",""),16),
+        amt = Math.round(2.55 * percent),
+        R = (num >> 16) + amt,
+        B = ((num >> 8) & 0x00FF) + amt,
+        G = (num & 0x0000FF) + amt;
+  return "#" + (0x1000000 + (R<255?R<1?0:R:255)*0x10000 + (B<255?B<1?0:B:255)*0x100 + (G<255?G<1?0:G:255)).toString(16).slice(1);
+}
+
 function refresh3D() {
-  ctx.fillStyle = '#e8f5e8'; // Легкий зеленоватый фон для 3D
+  ctx.fillStyle = '#e8f5e8'; // Фон 3D
   ctx.fillRect(0, 0, RES, RES);
   
   const cubes = [];
   for (let z = 0; z < SIZE; z++)
     for (let y = 0; y < SIZE; y++)
       for (let x = 0; x < SIZE; x++)
-        if (voxels[z][y][x]) cubes.push({x: x - SIZE/2, y: y - SIZE/2, z: z - SIZE/2, color: voxels[z][y][x]});
+        if (voxels[z][y][x]) cubes.push({x: x - SIZE/2 + 0.5, y: y - SIZE/2 + 0.5, z: z - SIZE/2 + 0.5, color: voxels[z][y][x]});
 
   if (cubes.length === 0) return;
 
-  // ОРТОГРАФИЧЕСКАЯ ПРОЕКЦИЯ (без перспективы, кубики не уменьшаются)
-  function project(v) {
-    const scale = 35; // Фиксированный размер кубика
-    const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
-    const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
-    
+  const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+  const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+  const scale = 40; // Масштаб модели
+  const fov = 400; // Перспектива
+
+  // Функция проекции точки
+  function project(x, y, z) {
     // Вращение X
-    let y1 = v.y * cosX - v.z * sinX;
-    let z1 = v.y * sinX + v.z * cosX;
+    let y1 = y * cosX - z * sinX;
+    let z1 = y * sinX + z * cosX;
     // Вращение Y
-    let x2 = v.x * cosY + z1 * sinY;
-    let z2 = -v.x * sinY + z1 * cosY;
+    let x2 = x * cosY + z1 * sinY;
+    let z2 = -x * sinY + z1 * cosY;
+    
+    const depth = z2 + fov;
+    const factor = fov / Math.max(depth, 1);
     
     return {
-      x: RES/2 + x2 * scale,
-      y: RES/2 - y1 * scale,
-      depth: z2 // Нужно только для сортировки (какой кубик ближе)
+      x: RES/2 + x2 * factor * scale,
+      y: RES/2 - y1 * factor * scale,
+      depth: z2
     };
   }
 
-  // Сортируем кубики (дальние рисуем первыми)
-  cubes.sort((a, b) => project(b).depth - project(a).depth);
+  // Сортируем кубы по глубине (дальние рисуем первыми)
+  cubes.sort((a, b) => {
+    const pA = project(a.x, a.y, a.z);
+    const pB = project(b.x, b.y, b.z);
+    return pB.depth - pA.depth;
+  });
 
-  // Рисуем кубики
+  // Рисуем каждый куб (с 3 гранями)
   cubes.forEach(c => {
-    const p = project(c);
-    const size = 30; // Жесткий размер кубика
-    ctx.fillStyle = c.color;
-    ctx.fillRect(p.x - size/2, p.y - size/2, size, size);
+    const size = 0.5; // Половина размера куба
+    // 8 вершин куба
+    const pts = [
+      project(c.x-size, c.y-size, c.z-size), // 0: лев-низ-зад
+      project(c.x+size, c.y-size, c.z-size), // 1: прав-низ-зад
+      project(c.x+size, c.y+size, c.z-size), // 2: прав-верх-зад
+      project(c.x-size, c.y+size, c.z-size), // 3: лев-верх-зад
+      project(c.x-size, c.y-size, c.z+size), // 4: лев-низ-перед
+      project(c.x+size, c.y-size, c.z+size), // 5: прав-низ-перед
+      project(c.x+size, c.y+size, c.z+size), // 6: прав-верх-перед
+      project(c.x-size, c.y+size, c.z+size)  // 7: лев-верх-перед
+    ];
+
+    const baseColor = c.color;
     
-    // Обводка для объема
-    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    // Определяем, какие грани видны (по направлению взгляда)
+    // Рисуем переднюю грань (5,6,7,4)
+    ctx.fillStyle = baseColor;
+    ctx.beginPath();
+    ctx.moveTo(pts[4].x, pts[4].y);
+    ctx.lineTo(pts[5].x, pts[5].y);
+    ctx.lineTo(pts[6].x, pts[6].y);
+    ctx.lineTo(pts[7].x, pts[7].y);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(p.x - size/2, p.y - size/2, size, size);
+    ctx.stroke();
+
+    // Верхняя грань (3,2,6,7) - светлее
+    if (rotX < 0) {
+      ctx.fillStyle = shadeColor(baseColor, 20);
+      ctx.beginPath();
+      ctx.moveTo(pts[3].x, pts[3].y);
+      ctx.lineTo(pts[2].x, pts[2].y);
+      ctx.lineTo(pts[6].x, pts[6].y);
+      ctx.lineTo(pts[7].x, pts[7].y);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Правая грань (1,5,6,2) - темнее
+    if (rotY > 0) {
+      ctx.fillStyle = shadeColor(baseColor, -20);
+      ctx.beginPath();
+      ctx.moveTo(pts[1].x, pts[1].y);
+      ctx.lineTo(pts[5].x, pts[5].y);
+      ctx.lineTo(pts[6].x, pts[6].y);
+      ctx.lineTo(pts[2].x, pts[2].y);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Левая грань (0,4,7,3) - темнее
+    if (rotY < 0) {
+      ctx.fillStyle = shadeColor(baseColor, -30);
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      ctx.lineTo(pts[4].x, pts[4].y);
+      ctx.lineTo(pts[7].x, pts[7].y);
+      ctx.lineTo(pts[3].x, pts[3].y);
+      ctx.fill();
+      ctx.stroke();
+    }
   });
 }
 
@@ -201,7 +274,7 @@ function paint(clientX, clientY) {
   const p = getGridPos(clientX, clientY);
   if (p.x < 0 || p.x >= SIZE || p.y < 0 || p.y >= SIZE) return;
 
-  // Закрашиваем линию между прошлым и текущим положением пальца (чтобы не было точек)
+  // Закрашиваем линию (алгоритм Брезенхэма)
   if (lastGridX !== -1 && lastGridY !== -1) {
     let x0 = lastGridX, y0 = lastGridY;
     let x1 = p.x, y1 = p.y;
@@ -225,10 +298,10 @@ function paint(clientX, clientY) {
   refresh2D();
 }
 
-// === ОБРАБОТКА КАСАНИЙ ===
+// === ОБРАБОТКА КАСАНИЙ (только для 2D) ===
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  mode = 'draw'; // При касании переключаемся на рисование
+  isViewing3D = false; // При касании переключаемся на рисование
   isDrawing = true;
   lastGridX = -1; lastGridY = -1;
   paint(e.touches[0].clientX, e.touches[0].clientY);
@@ -248,8 +321,8 @@ canvas.addEventListener('touchend', e => {
   lastGridX = -1; lastGridY = -1;
 }, { passive: false });
 
-// Мышь для ПК
-canvas.addEventListener('mousedown', e => { mode = 'draw'; isDrawing = true; lastGridX = -1; paint(e.clientX, e.clientY); refresh2D(); });
+// Мышь
+canvas.addEventListener('mousedown', e => { isViewing3D = false; isDrawing = true; lastGridX = -1; paint(e.clientX, e.clientY); refresh2D(); });
 canvas.addEventListener('mousemove', e => { if (isDrawing) { paint(e.clientX, e.clientY); refresh2D(); } });
 window.addEventListener('mouseup', () => { isDrawing = false; lastGridX = -1; });
 
@@ -264,7 +337,7 @@ function updateUI() {
     if (i === currentLayer) btn.className = 'active-layer';
     btn.onclick = () => { 
       currentLayer = i; 
-      mode = 'draw'; // При смене слоя возвращаемся к сетке
+      isViewing3D = false; // При смене слоя возвращаем сетку
       refresh2D(); 
       updateUI(); 
     };
@@ -272,11 +345,11 @@ function updateUI() {
   }
 }
 
-function prevLayer() { if (currentLayer > 0) { currentLayer--; mode = 'draw'; refresh2D(); updateUI(); } }
-function nextLayer() { if (currentLayer < SIZE - 1) { currentLayer++; mode = 'draw'; refresh2D(); updateUI(); } }
+function prevLayer() { if (currentLayer > 0) { currentLayer--; isViewing3D = false; refresh2D(); updateUI(); } }
+function nextLayer() { if (currentLayer < SIZE - 1) { currentLayer++; isViewing3D = false; refresh2D(); updateUI(); } }
 function clearLayer() { 
   for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) voxels[currentLayer][y][x] = null; 
-  mode = 'draw';
+  isViewing3D = false;
   refresh2D(); 
 }
 function applyHex() { 
@@ -328,4 +401,4 @@ updateUI();
 refresh2D();
 </script>
 </body>
-</html>
+ </html>
