@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Voxel Item 2D/3D</title>
+<title>Voxel Item 3D (Исправленный)</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body {
@@ -17,17 +17,18 @@
     display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; align-items: center; margin: 5px 0;
   }
   button {
-    padding: 8px 12px; font-size: 13px; border: none; border-radius: 6px;
+    padding: 10px 14px; font-size: 14px; border: none; border-radius: 6px;
     background: #333; color: #eee; cursor: pointer; min-height: 40px;
   }
   button:active { background: #555; }
   button.active-layer { background: #4caf50; color: #fff; font-weight: bold; }
+  button.nav-btn { background: #2196F3; color: #fff; font-size: 18px; padding: 8px 16px; font-weight: bold; }
+  button.nav-btn:active { background: #1976D2; }
   input[type=color] { width: 45px; height: 40px; border: none; border-radius: 6px; background: transparent; }
   input[type=text] { padding: 8px; font-size: 13px; border-radius: 6px; border: 1px solid #555; background: #2a2a2a; color: #eee; width: 100px; }
   #layerBar { display: flex; overflow-x: auto; gap: 5px; padding: 4px 0; -webkit-overflow-scrolling: touch; }
   #layerBar button { flex: 0 0 auto; min-width: 40px; }
   
-  /* ЕДИНОЕ ОКНО */
   #main-canvas {
     display: block; margin: 10px auto;
     width: 95vw; height: 95vw;
@@ -41,7 +42,7 @@
 </style>
 </head>
 <body>
-<h2>1 палец — рисовать, 2 пальца — крутить 3D</h2>
+<h2>Воксельный редактор (сплошное рисование)</h2>
 
 <div class="row">
   <button onclick="prevLayer()">◀ Слой</button>
@@ -58,7 +59,16 @@
 </div>
 
 <canvas id="main-canvas"></canvas>
-<p class="hint" id="modeHint">Режим: Рисование</p>
+
+<!-- Кнопки 3D вращения -->
+<div class="row" style="margin-top: 10px;">
+  <span style="font-size: 13px; width: 100%; color: #aaa; margin-bottom: 5px;">3D Вращение:</span>
+  <button class="nav-btn" onclick="rotate3D(0, -0.2)">↑</button>
+  <button class="nav-btn" onclick="rotate3D(-0.2, 0)">←</button>
+  <button class="nav-btn" onclick="rotate3D(0, 0.2)">↓</button>
+  <button class="nav-btn" onclick="rotate3D(0.2, 0)">→</button>
+  <button onclick="reset3D()" style="background: #555; margin-left: 10px;">Сброс</button>
+</div>
 
 <div class="row">
   <label>Имя: <input type="text" id="name" placeholder="Item"></label>
@@ -71,7 +81,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 const SIZE = 8;
-const RES = 360; // Внутреннее разрешение холста (не менять)
+const RES = 360;
 let currentLayer = 0;
 let voxels = Array.from({length: SIZE}, () => Array.from({length: SIZE}, () => Array(SIZE).fill(null)));
 
@@ -80,21 +90,19 @@ const ctx = canvas.getContext('2d');
 canvas.width = RES;
 canvas.height = RES;
 
-// --- 2D РИСОВАНИЕ ---
+// === 2D РИСОВАНИЕ ===
 function refresh2D() {
   const cell = RES / SIZE;
-  ctx.fillStyle = '#f5f5f5'; // Светлый фон
+  ctx.fillStyle = '#f5f5f5';
   ctx.fillRect(0, 0, RES, RES);
   
-  // Линии сетки
-  ctx.strokeStyle = '#a8e6a8'; // Бело-зеленый
+  ctx.strokeStyle = '#a8e6a8';
   ctx.lineWidth = 1.5;
   for (let i = 0; i <= SIZE; i++) {
     ctx.beginPath(); ctx.moveTo(i * cell, 0); ctx.lineTo(i * cell, RES); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, i * cell); ctx.lineTo(RES, i * cell); ctx.stroke();
   }
   
-  // Квадратики
   for (let y = 0; y < SIZE; y++) {
     for (let x = 0; x < SIZE; x++) {
       const col = voxels[currentLayer][y][x];
@@ -106,79 +114,83 @@ function refresh2D() {
   }
 }
 
-// --- ПРОСТАЯ 3D ОТРИСОВКА (БЕЗ THREE.JS) ---
-let rotX = 0.5, rotY = 0.5; // Углы поворота
+// === 3D ОТРИСОВКА (ОРТОГРАФИЧЕСКАЯ, БЕЗ РАЗЛЕТАНИЯ) ===
+let rotX = 0.5, rotY = 0.5;
+let mode = 'draw'; // 'draw' или '3d'
+
+function rotate3D(dx, dy) {
+  rotY += dx;
+  rotX += dy;
+  rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, rotX));
+  mode = '3d'; // При вращении переключаемся на 3D
+  refresh3D();
+}
+
+function reset3D() {
+  rotX = 0.5; rotY = 0.5;
+  mode = '3d';
+  refresh3D();
+}
 
 function refresh3D() {
-  ctx.fillStyle = '#f5f5f5'; // Фон для 3D
+  ctx.fillStyle = '#e8f5e8'; // Легкий зеленоватый фон для 3D
   ctx.fillRect(0, 0, RES, RES);
   
-  // Собираем все кубики
   const cubes = [];
   for (let z = 0; z < SIZE; z++)
     for (let y = 0; y < SIZE; y++)
       for (let x = 0; x < SIZE; x++)
         if (voxels[z][y][x]) cubes.push({x: x - SIZE/2, y: y - SIZE/2, z: z - SIZE/2, color: voxels[z][y][x]});
 
-  // Функция проекции 3D в 2D (перспектива)
+  if (cubes.length === 0) return;
+
+  // ОРТОГРАФИЧЕСКАЯ ПРОЕКЦИЯ (без перспективы, кубики не уменьшаются)
   function project(v) {
-    const scale = 100;
+    const scale = 35; // Фиксированный размер кубика
     const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
     const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
     
-    // Вращение вокруг X
+    // Вращение X
     let y1 = v.y * cosX - v.z * sinX;
     let z1 = v.y * sinX + v.z * cosX;
-    // Вращение вокруг Y
+    // Вращение Y
     let x2 = v.x * cosY + z1 * sinY;
     let z2 = -v.x * sinY + z1 * cosY;
     
-    // Перспектива
-    const fov = 250;
-    const depth = z2 + fov; // Сдвигаем от камеры
-    const factor = fov / Math.max(depth, 1);
-    
     return {
-      x: RES/2 + x2 * factor * (scale / 2),
-      y: RES/2 - y1 * factor * (scale / 2),
-      depth: z2 // Для сортировки
+      x: RES/2 + x2 * scale,
+      y: RES/2 - y1 * scale,
+      depth: z2 // Нужно только для сортировки (какой кубик ближе)
     };
   }
 
-  // Сортируем кубы по глубине (дальние рисуем первыми)
-  cubes.sort((a, b) => {
-    const pA = project(a);
-    const pB = project(b);
-    return pB.depth - pA.depth;
-  });
+  // Сортируем кубики (дальние рисуем первыми)
+  cubes.sort((a, b) => project(b).depth - project(a).depth);
 
-  // Рисуем каждый куб (упрощенно - квадрат)
+  // Рисуем кубики
   cubes.forEach(c => {
     const p = project(c);
-    const size = 15 * (250 / (p.depth + 250)); // Размер зависит от глубины
+    const size = 30; // Жесткий размер кубика
     ctx.fillStyle = c.color;
     ctx.fillRect(p.x - size/2, p.y - size/2, size, size);
     
     // Обводка для объема
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
     ctx.lineWidth = 1;
     ctx.strokeRect(p.x - size/2, p.y - size/2, size, size);
   });
 }
 
-// --- УПРАВЛЕНИЕ КАСАНИЯМИ ---
+// === СПЛОШНОЕ РИСОВАНИЕ ===
 let isDrawing = false;
-let isRotating = false;
-let lastX = 0, lastY = 0;
+let lastGridX = -1, lastGridY = -1;
 
 function getGridPos(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
-  // Пересчет координат с учетом масштабирования CSS
   const scaleX = RES / rect.width;
   const scaleY = RES / rect.height;
   const canvasX = (clientX - rect.left) * scaleX;
   const canvasY = (clientY - rect.top) * scaleY;
-  
   return {
     x: Math.floor(canvasX / (RES / SIZE)),
     y: Math.floor(canvasY / (RES / SIZE))
@@ -187,59 +199,61 @@ function getGridPos(clientX, clientY) {
 
 function paint(clientX, clientY) {
   const p = getGridPos(clientX, clientY);
-  if (p.x >= 0 && p.x < SIZE && p.y >= 0 && p.y < SIZE) {
+  if (p.x < 0 || p.x >= SIZE || p.y < 0 || p.y >= SIZE) return;
+
+  // Закрашиваем линию между прошлым и текущим положением пальца (чтобы не было точек)
+  if (lastGridX !== -1 && lastGridY !== -1) {
+    let x0 = lastGridX, y0 = lastGridY;
+    let x1 = p.x, y1 = p.y;
+    let dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    let dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    let err = dx + dy, e2;
+
+    while (true) {
+      voxels[currentLayer][y0][x0] = document.getElementById('color').value;
+      if (x0 === x1 && y0 === y1) break;
+      e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+  } else {
     voxels[currentLayer][p.y][p.x] = document.getElementById('color').value;
-    refresh2D();
   }
+  
+  lastGridX = p.x;
+  lastGridY = p.y;
+  refresh2D();
 }
 
+// === ОБРАБОТКА КАСАНИЙ ===
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  if (e.touches.length === 1) {
-    isDrawing = true; isRotating = false;
-    document.getElementById('modeHint').textContent = "Режим: Рисование";
-    refresh2D();
-    paint(e.touches[0].clientX, e.touches[0].clientY);
-  } else if (e.touches.length === 2) {
-    isDrawing = false; isRotating = true;
-    document.getElementById('modeHint').textContent = "Режим: 3D Вращение";
-    lastX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-    lastY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-  }
+  mode = 'draw'; // При касании переключаемся на рисование
+  isDrawing = true;
+  lastGridX = -1; lastGridY = -1;
+  paint(e.touches[0].clientX, e.touches[0].clientY);
+  refresh2D(); // Показываем сетку
 }, { passive: false });
 
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  if (isDrawing && e.touches.length === 1) {
-    paint(e.touches[0].clientX, e.touches[0].clientY);
-  } else if (isRotating && e.touches.length === 2) {
-    const avgX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
-    const avgY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-    const dx = avgX - lastX;
-    const dy = avgY - lastY;
-    lastX = avgX; lastY = avgY;
-    rotY += dx * 0.01;
-    rotX += dy * 0.01;
-    rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, rotX));
-    refresh3D(); // Перерисовываем 3D
-  }
+  if (!isDrawing) return;
+  paint(e.touches[0].clientX, e.touches[0].clientY);
+  refresh2D();
 }, { passive: false });
 
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
-  if (e.touches.length === 0) {
-    isDrawing = false; isRotating = false;
-    document.getElementById('modeHint').textContent = "Режим: Рисование";
-    refresh2D(); // Возвращаем сетку
-  }
+  isDrawing = false;
+  lastGridX = -1; lastGridY = -1;
 }, { passive: false });
 
-// Мышь для теста на ПК
-canvas.addEventListener('mousedown', e => { isDrawing = true; paint(e.clientX, e.clientY); });
-canvas.addEventListener('mousemove', e => { if (isDrawing) paint(e.clientX, e.clientY); });
-window.addEventListener('mouseup', () => { isDrawing = false; });
+// Мышь для ПК
+canvas.addEventListener('mousedown', e => { mode = 'draw'; isDrawing = true; lastGridX = -1; paint(e.clientX, e.clientY); refresh2D(); });
+canvas.addEventListener('mousemove', e => { if (isDrawing) { paint(e.clientX, e.clientY); refresh2D(); } });
+window.addEventListener('mouseup', () => { isDrawing = false; lastGridX = -1; });
 
-// --- КНОПКИ И СЛОИ ---
+// === КНОПКИ И СЛОИ ===
 function updateUI() {
   document.getElementById('layerLabel').textContent = currentLayer;
   const bar = document.getElementById('layerBar');
@@ -250,6 +264,7 @@ function updateUI() {
     if (i === currentLayer) btn.className = 'active-layer';
     btn.onclick = () => { 
       currentLayer = i; 
+      mode = 'draw'; // При смене слоя возвращаемся к сетке
       refresh2D(); 
       updateUI(); 
     };
@@ -257,10 +272,11 @@ function updateUI() {
   }
 }
 
-function prevLayer() { if (currentLayer > 0) { currentLayer--; refresh2D(); updateUI(); } }
-function nextLayer() { if (currentLayer < SIZE - 1) { currentLayer++; refresh2D(); updateUI(); } }
+function prevLayer() { if (currentLayer > 0) { currentLayer--; mode = 'draw'; refresh2D(); updateUI(); } }
+function nextLayer() { if (currentLayer < SIZE - 1) { currentLayer++; mode = 'draw'; refresh2D(); updateUI(); } }
 function clearLayer() { 
   for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) voxels[currentLayer][y][x] = null; 
+  mode = 'draw';
   refresh2D(); 
 }
 function applyHex() { 
@@ -268,7 +284,7 @@ function applyHex() {
   if (/^#[0-9a-fA-F]{6}$/.test(v)) document.getElementById('color').value = v; 
 }
 
-// --- ГЕНЕРАЦИЯ ПАКА ---
+// === ГЕНЕРАЦИЯ ПАКА ===
 async function generate() {
   const name = document.getElementById('name').value || 'Voxel Item';
   const id = (document.getElementById('id').value || 'voxel_item').replace(/[^a-z0-9_]/gi, '_').toLowerCase();
